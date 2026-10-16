@@ -46,29 +46,31 @@ jobs:
           fi
           ls -a
 
-      # ── 加速点 1 ──
-      # 直接下载 Gradle 8.7 官方发行包并缓存。
-      # 不再「生成 wrapper」：runner 预装的 Gradle 9.8.1 与 AGP 8.5 不兼容，
-      # 且 Gradle 9 的 wrapper 任务不允许在空目录执行，那条路走不通。
+      # 加速点 1：直接下载 Gradle 8.7 发行包并缓存。
+      # 不生成 wrapper——runner 预装的 Gradle 9.8.1 与 AGP 8.5 不兼容，
+      # 且 Gradle 9 的 wrapper 任务不允许在空目录执行。
+      # 注意：shell 里一律用 RUNNER_TEMP 环境变量，不要用 Actions 表达式，
+      # 后者在 run 块里若转义出错会变成单大括号而报 bad substitution。
       - name: 缓存 Gradle 8.7 发行包
         id: cache-gradle
         uses: actions/cache@v4
         with:
-          path: ${ runner.temp }/gradle-8.7
+          path: ${{ runner.temp }}/gradle-8.7
           key: gradle-dist-8.7-bin-v1
 
       - name: 下载并解压 Gradle 8.7
         if: steps.cache-gradle.outputs.cache-hit != 'true'
         run: |
           set -e
-          cd ${ runner.temp }
+          mkdir -p "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
           curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
           unzip -q gradle.zip
           rm -f gradle.zip
-          ${ runner.temp }/gradle-8.7/bin/gradle --version
+          "$RUNNER_TEMP/gradle-8.7/bin/gradle" --version
 
       - name: 把 Gradle 8.7 加入 PATH
-        run: echo "${ runner.temp }/gradle-8.7/bin" >> $GITHUB_PATH
+        run: echo "$RUNNER_TEMP/gradle-8.7/bin" >> "$GITHUB_PATH"
 
       # 固定 debug 签名：runner 每次都是新机器，若让它自动生成，
       # 每次签名都不同，手机会提示「签名不一致」无法覆盖安装。
@@ -88,8 +90,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # ── 加速点 2 ──
-      # 缓存依赖（AGP / Kotlin / Room / Coil …），第二次起不再重复下载
+      # 加速点 2：缓存依赖（AGP / Kotlin / Room / Coil …）
       - name: 缓存 Gradle 依赖
         uses: actions/cache@v4
         with:
