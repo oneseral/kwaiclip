@@ -51,6 +51,18 @@ jobs:
           fi
           ls -a
 
+      # 固定 debug 签名：runner 每次都是新机器，若让它自动生成，
+      # 每次签名都不同，手机会提示「签名不一致」无法覆盖安装。
+      # 这里把一份固定的 debug.keystore 写进 ~/.android/，
+      # AGP 会自动用它签名 debug 包（密码 android / 别名 androiddebugkey）。
+      - name: 写入固定调试签名
+        run: |
+          set -e
+          mkdir -p ~/.android
+          echo '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' | base64 -d > ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null
+          echo "固定签名已就绪"
+
       # 注意：不要加 cache: gradle，也不要加 android-actions/setup-android
       #   - cache: gradle 在源码未就绪时会扫描失败
       #   - runner 已预装 Android SDK，setup-android 反而会因 Node 版本报错
@@ -83,7 +95,7 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: 快手留痕 ${{ github.run_number }}
           body: |
-            自动构建的 Debug 版 APK，下载后直接安装即可使用。
+            自动构建的 Debug 版 APK，签名固定，可直接覆盖安装。
 
             使用步骤：
             1. 安装 APK，打开 App，点「开启无障碍服务」
