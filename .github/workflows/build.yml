@@ -1,0 +1,89 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # 关键：没有它，发布 Release 会 403
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v5
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # 注意：不要加 android-actions/setup-android
+      # GitHub runner 已预装 Android SDK，加上反而会因 Node 版本问题失败
+
+      # 支持两种用法：
+      #   A) 直接把工程文件传到仓库根目录 -> 跳过解压
+      #   B) 只传一个 .zip 源码包        -> 自动解压后再构建
+      - name: 准备源码（压缩包会自动解压）
+        run: |
+          set -e
+          if [ -f settings.gradle.kts ]; then
+            echo "仓库根目录已有源码，跳过解压"
+          else
+            shopt -s nullglob
+            zips=(*.zip)
+            if [ ${#zips[@]} -eq 0 ]; then
+              echo "::error::既没有源码文件，也没有 .zip 压缩包"
+              exit 1
+            fi
+            mkdir -p __unzip
+            for z in "${zips[@]}"; do
+              echo "解压 $z"
+              unzip -q -o "$z" -d __unzip
+            done
+            ROOT=$(find __unzip -name settings.gradle.kts -printf '%h\n' | head -1)
+            if [ -z "$ROOT" ]; then
+              echo "::error::压缩包里找不到 settings.gradle.kts"
+              exit 1
+            fi
+            cp -a "$ROOT"/. ./
+            rm -rf __unzip
+            echo "已从压缩包解压源码：$ROOT"
+          fi
+          ls -a
+
+      - name: 生成 Gradle Wrapper
+        run: |
+          gradle wrapper --gradle-version 8.7 --distribution-type bin
+          chmod +x gradlew
+
+      - name: 构建 Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: 上传到 Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: KwaiClip-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      # 重点：Release 里的 APK 是 .apk 文件本身，手机点开就能下载安装
+      # 比 Artifacts（要登录 + 解压 zip）方便得多
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 快手留痕 ${{ github.run_number }}
+          body: |
+            自动构建的 Debug 版 APK，下载后直接安装即可使用。
+
+            使用步骤：
+            1. 安装 APK，打开 App，点「开启无障碍服务」
+            2. 在系统无障碍设置里找到「快手留痕」并打开
+            3. 打开快手，点「分享 → 复制链接」，再点悬浮球即可保存
+          files: app/build/outputs/apk/debug/*.apk
