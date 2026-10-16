@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # 关键：没有它，发布 Release 会 403
     permissions:
       contents: write
 
@@ -16,10 +15,6 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v5
 
-      # 必须放在 setup-java 之前：
-      # setup-java 若带 cache: gradle，会在执行时扫描 gradle 文件，
-      # 此时源码还在 zip 里没解压，会直接报 "No file matched to [**/*.gradle*...]"
-      #
       # 支持两种用法：
       #   A) 直接把工程文件传到仓库根目录 -> 跳过解压
       #   B) 只传一个 .zip 源码包        -> 自动解压后再构建
@@ -51,10 +46,32 @@ jobs:
           fi
           ls -a
 
-      # 固定 debug 签名：runner 每次都是新机器，若让它自动生成，
-      # 每次签名都不同，手机会提示「签名不一致」无法覆盖安装。
-      # 这里把一份固定的 debug.keystore 写进 ~/.android/，
-      # AGP 会自动用它签名 debug 包（密码 android / 别名 androiddebugkey）。
+      # 缓存 gradlew / gradle-wrapper.jar，命中后整个跳过「生成 Wrapper」步骤
+      - name: 缓存 Gradle Wrapper 文件
+        id: cache-wrapper
+        uses: actions/cache@v4
+        with:
+          path: |
+            gradlew
+            gradlew.bat
+            gradle/wrapper
+          key: gradle-wrapper-8.7-v1
+
+      - name: 生成 Gradle Wrapper
+        if: steps.cache-wrapper.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          # 必须在空目录里跑：在项目根目录执行时，runner 预装的 Gradle 9.x
+          # 会先配置本项目，而 AGP 8.5 与 Gradle 9 不兼容，会空转一分钟后失败
+          rm -rf /tmp/wrapgen && mkdir -p /tmp/wrapgen
+          cd /tmp/wrapgen
+          gradle wrapper --gradle-version 8.7 --distribution-type bin --no-daemon
+          cp -r /tmp/wrapgen/gradle /tmp/wrapgen/gradlew "$GITHUB_WORKSPACE"/
+          [ -f /tmp/wrapgen/gradlew.bat ] && cp /tmp/wrapgen/gradlew.bat "$GITHUB_WORKSPACE"/ || true
+          chmod +x "$GITHUB_WORKSPACE"/gradlew
+
+      # 固定 debug 签名：runner 每次都是新机器，让它自动生成会导致
+      # 每次签名不同，手机提示「签名不一致」无法覆盖安装
       - name: 写入固定调试签名
         run: |
           set -e
@@ -63,22 +80,34 @@ jobs:
           keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null
           echo "固定签名已就绪"
 
-      # 注意：不要加 cache: gradle，也不要加 android-actions/setup-android
-      #   - cache: gradle 在源码未就绪时会扫描失败
-      #   - runner 已预装 Android SDK，setup-android 反而会因 Node 版本报错
+      # 不要加 android-actions/setup-android：runner 已预装 SDK，
+      # 该 action 反而会因 Node 版本报错
       - name: 安装 JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
 
-      - name: 生成 Gradle Wrapper
-        run: |
-          gradle wrapper --gradle-version 8.7 --distribution-type bin
-          chmod +x gradlew
+      # 缓存 Gradle 发行包与依赖，第二次起不再重复下载
+      - name: 缓存 Gradle 发行包与依赖
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-cache-${{ hashFiles('**/*.gradle.kts', '**/gradle.properties', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-cache-
 
       - name: 构建 Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: 重命名为 KwaiClip-v1.0-debug.apk
+        run: |
+          set -e
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          mv "$APK" app/build/outputs/apk/debug/KwaiClip-v1.0-debug.apk
+          ls -lh app/build/outputs/apk/debug/
 
       - name: 上传到 Artifacts
         uses: actions/upload-artifact@v4
@@ -87,7 +116,7 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
-      # 重点：Release 里的 APK 是 .apk 文件本身，手机点开就能下载安装
+      # Release 里的 APK 是 .apk 文件本身，手机点开就能下载安装，
       # 比 Artifacts（要登录 + 解压 zip）方便得多
       - name: 发布到 Release
         uses: softprops/action-gh-release@v2
