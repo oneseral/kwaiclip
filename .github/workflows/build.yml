@@ -13,19 +13,13 @@ jobs:
       contents: write
 
     steps:
-      - name: 检出源码
+      - name: 检出仓库
         uses: actions/checkout@v5
 
-      - name: 安装 JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 17
-          cache: gradle
-
-      # 注意：不要加 android-actions/setup-android
-      # GitHub runner 已预装 Android SDK，加上反而会因 Node 版本问题失败
-
+      # 必须放在 setup-java 之前：
+      # setup-java 若带 cache: gradle，会在执行时扫描 gradle 文件，
+      # 此时源码还在 zip 里没解压，会直接报 "No file matched to [**/*.gradle*...]"
+      #
       # 支持两种用法：
       #   A) 直接把工程文件传到仓库根目录 -> 跳过解压
       #   B) 只传一个 .zip 源码包        -> 自动解压后再构建
@@ -56,6 +50,15 @@ jobs:
             echo "已从压缩包解压源码：$ROOT"
           fi
           ls -a
+
+      # 注意：不要加 cache: gradle，也不要加 android-actions/setup-android
+      #   - cache: gradle 在源码未就绪时会扫描失败
+      #   - runner 已预装 Android SDK，setup-android 反而会因 Node 版本报错
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
 
       - name: 生成 Gradle Wrapper
         run: |
