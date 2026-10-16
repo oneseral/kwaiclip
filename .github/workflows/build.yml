@@ -46,32 +46,32 @@ jobs:
           fi
           ls -a
 
-      # 缓存 gradlew / gradle-wrapper.jar，命中后整个跳过「生成 Wrapper」步骤
-      - name: 缓存 Gradle Wrapper 文件
-        id: cache-wrapper
+      # ── 加速点 1 ──
+      # 直接下载 Gradle 8.7 官方发行包并缓存。
+      # 不再「生成 wrapper」：runner 预装的 Gradle 9.8.1 与 AGP 8.5 不兼容，
+      # 且 Gradle 9 的 wrapper 任务不允许在空目录执行，那条路走不通。
+      - name: 缓存 Gradle 8.7 发行包
+        id: cache-gradle
         uses: actions/cache@v4
         with:
-          path: |
-            gradlew
-            gradlew.bat
-            gradle/wrapper
-          key: gradle-wrapper-8.7-v1
+          path: ${ runner.temp }/gradle-8.7
+          key: gradle-dist-8.7-bin-v1
 
-      - name: 生成 Gradle Wrapper
-        if: steps.cache-wrapper.outputs.cache-hit != 'true'
+      - name: 下载并解压 Gradle 8.7
+        if: steps.cache-gradle.outputs.cache-hit != 'true'
         run: |
           set -e
-          # 必须在空目录里跑：在项目根目录执行时，runner 预装的 Gradle 9.x
-          # 会先配置本项目，而 AGP 8.5 与 Gradle 9 不兼容，会空转一分钟后失败
-          rm -rf /tmp/wrapgen && mkdir -p /tmp/wrapgen
-          cd /tmp/wrapgen
-          gradle wrapper --gradle-version 8.7 --distribution-type bin --no-daemon
-          cp -r /tmp/wrapgen/gradle /tmp/wrapgen/gradlew "$GITHUB_WORKSPACE"/
-          [ -f /tmp/wrapgen/gradlew.bat ] && cp /tmp/wrapgen/gradlew.bat "$GITHUB_WORKSPACE"/ || true
-          chmod +x "$GITHUB_WORKSPACE"/gradlew
+          cd ${ runner.temp }
+          curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q gradle.zip
+          rm -f gradle.zip
+          ${ runner.temp }/gradle-8.7/bin/gradle --version
 
-      # 固定 debug 签名：runner 每次都是新机器，让它自动生成会导致
-      # 每次签名不同，手机提示「签名不一致」无法覆盖安装
+      - name: 把 Gradle 8.7 加入 PATH
+        run: echo "${ runner.temp }/gradle-8.7/bin" >> $GITHUB_PATH
+
+      # 固定 debug 签名：runner 每次都是新机器，若让它自动生成，
+      # 每次签名都不同，手机会提示「签名不一致」无法覆盖安装。
       - name: 写入固定调试签名
         run: |
           set -e
@@ -88,19 +88,20 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # 缓存 Gradle 发行包与依赖，第二次起不再重复下载
-      - name: 缓存 Gradle 发行包与依赖
+      # ── 加速点 2 ──
+      # 缓存依赖（AGP / Kotlin / Room / Coil …），第二次起不再重复下载
+      - name: 缓存 Gradle 依赖
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-cache-${{ hashFiles('**/*.gradle.kts', '**/gradle.properties', 'gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-deps-${{ hashFiles('**/*.gradle.kts', '**/gradle.properties') }}
           restore-keys: |
-            gradle-${{ runner.os }}-cache-
+            gradle-${{ runner.os }}-deps-
 
       - name: 构建 Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace
 
       - name: 重命名为 KwaiClip-v1.0-debug.apk
         run: |
